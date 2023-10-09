@@ -1,1 +1,1 @@
-"#Golang-Restaurant-Management-Backend-Project" 
+"#Golang-Restaurant-Management-Backend-Project" _ Personal project
