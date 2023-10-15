@@ -2,7 +2,9 @@ package controller
 
 import (
 	"context"
+	"fmt"
 	"golang-restaurant-management/database"
+	"golang-restaurant-management/models"
 	"log"
 	"net/http"
 	"time"
@@ -82,12 +84,107 @@ func GetInvoice() gin.HandlerFunc {
 
 func CreateInvoices() gin.HandlerFunc {
 	return func(ctx *gin.Context) {
+		var ctx, cancel = context.WithTimeout(context.Background(), 100*time.Second)
+		var invoice models.Invoice
+
+		if err := c.BindJSON(&invoice); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+
+		var order models.Order
+
+		err := orderCollection.FindOne(ctx, bson.M{"order_id": invoice.Order_id}).Decode(&order)
+		defer cancel()
+		if err != nil {
+			msg := fmt.Sprintf("message: Order was not found")
+			c.JSON(http.StatusInternalServerError, gin.H{"error": msg})
+			return
+		}
+		status := "PENDING"
+		if invoice.Payment_status == nil {
+			invoice.Payment_status = &status
+		}
+
+		invoice.Payment_due_date, _ = time.Parse(time.RFC3339, time.Now().AddDate(0, 0, 1).Format(time.RFC3339))
+		invoice.Created_at, _ = time.Parse(time.RFC3339, time.Now().Format(time.RFC3339))
+		invoice.Updated_at, _ = time.Parse(time.RFC3339, time.Now().Format(time.RFC3339))
+		invoice.ID = primitive.NewObjectID()
+		invoice.Invoice_id = invoice.ID.Hex()
+
+		validationErr := validate.Struct(invoice)
+		if validationErr != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": validationErr.Error()})
+			return
+		}
+
+		result, insertErr := invoiceCollection.InsertOne(ctx, invoice)
+		if insertErr != nil {
+			msg := fmt.Sprintf("invoice item was not created")
+			c.JSON(http.StatusInternalServerError, gin.H{"error": msg})
+			return
+		}
+		defer cancel()
+
+		c.JSON(http.StatusOK, result)
 
 	}
 }
 
 func UpdateInvoices() gin.HandlerFunc {
 	return func(ctx *gin.Context) {
+		var ctx, cancel = context.WithTimeout(context.Background(), 100*time.Second)
+
+		var invoice models.Invoice
+		invoiceId := c.Param("invoice_id")
+
+		if err := c.BindJSON(&invoice); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+
+		filter := bson.M{"invoice_id": invoiceId}
+
+		var updateObj primitive.D
+
+		if invoice.Payment_method != nil {
+			updateObj = append(updateObj, bson.E{"payment_method", invoice.Payment_method})
+		}
+
+		if invoice.Payment_status != nil {
+			updateObj = append(updateObj, bson.E{"payment_status", invoice.Payment_status})
+		}
+
+		invoice.Updated_at, _ = time.Parse(time.RFC3339, time.Now().Format(time.RFC3339))
+		updateObj = append(updateObj, bson.E{"updated_at", invoice.Updated_at})
+
+		upsert := true
+		opt := options.UpdateOptions{
+			Upsert: &upsert,
+		}
+
+		status := "PENDING"
+		if invoice.Payment_status == nil {
+			invoice.Payment_status = &status
+		}
+
+		result, err := invoiceCollection.UpdateOne(
+			ctx,
+			filter,
+			bson.D{
+
+				{"$set", updateObj},
+			},
+			&opt,
+		)
+		if err != nil {
+			msg := fmt.Sprintf("invoice item update failed")
+			c.JSON(http.StatusInternalServerError, gin.H{"error": msg})
+			return
+		}
+
+		defer cancel()
+		c.JSON(http.StatusOK, result)
 
 	}
 }
